@@ -1,0 +1,142 @@
+[
+  {
+    "objectID": "ordinal_regression.html#motivation",
+    "href": "ordinal_regression.html#motivation",
+    "title": "Robust regression for noisy biological data",
+    "section": "Motivation",
+    "text": "Motivation\n\nOrdinal or numeric outcome (continuous or discrete)\nMay have outliers or non-normally distributed  (e.g. skewed, heavy tails)\nExamples in our lab:\n\nNormalized RNA or protein abundance\nCopy Number\nDNA methylation beta or m-values\n\nGoal: Perform robust statistical tests comparing noisy features btwn groups, potentially adjusting for covariates\nRobust?\n\nMinimal assumptions on the data distribution\nControl false-positive-rate for wide variety of data-types\nInsensitive to outliers"
+  },
+  {
+    "objectID": "ordinal_regression.html#but-first-the-wilcoxonmann-whitney-u-test",
+    "href": "ordinal_regression.html#but-first-the-wilcoxonmann-whitney-u-test",
+    "title": "Robust regression for noisy biological data",
+    "section": "But first… the Wilcoxon/Mann-Whitney U-test",
+    "text": "But first… the Wilcoxon/Mann-Whitney U-test\n\nOrdinal/numeric outcome btwn 2 unpaired groups\nRobust to outliers and no assumptions on data distribution\nExample:\n\nNHANES diabetes data (source)\nCompare HbA1c between 914 patients diagnosed with diabetes (or pre-diabetes) vs. 5881 undiagnosed\n\n\n\n\n\n\n\n\n\n\nQuestions:\n\nWhat is the Null and Alternative hypothesis?\nWhat is the effect size?"
+  },
+  {
+    "objectID": "ordinal_regression.html#how-it-works",
+    "href": "ordinal_regression.html#how-it-works",
+    "title": "Robust regression for noisy biological data",
+    "section": "How it works",
+    "text": "How it works\n\nAnalyze ranked order of the data, rather than raw values:\n\n\nCombine the 2 groups and rank from smallest to largest:\n\n\n\n\n\nExample of 8 patients\n\n\ndiabetes\nHbA1c\nrank\n\n\n\n\nNo\n5.4\n1.0\n\n\nNo\n5.6\n2.0\n\n\nYes\n5.8\n3.5\n\n\nNo\n5.8\n3.5\n\n\nYes\n6.4\n5.0\n\n\nYes\n6.9\n6.0\n\n\nNo\n7.0\n7.0\n\n\nYes\n9.3\n8.0\n\n\n\n\n\n\nWilcoxon test statistic:\n\n\n\n\\[\\begin{equation}\nW = R^*_1 - \\frac{n_1(n_1 + 1)}{2}\n\\end{equation}\\]\n\n\\(R^*_1\\) = sum of ranks in group 1\n\\(n_1\\) = sample size in group 1\n\n\n\nWilcoxon test using the full data:\n\n\n\nwilcox &lt;- wilcox.test(\n    formula = HbA1c ~ diabetes,\n    data = nhgh\n    );\nwilcox$statistic;\n\n       W \n754851.5 \n\nwilcox$p.value;\n\n[1] 4.413508e-270\n\n\n\nNotice \\(W=\\) 754851.5, which we can manually verify:\n\n\n\n\nnhgh$rank &lt;- rank(nhgh$HbA1c);\nsum.ranks.group.1 &lt;- sum(nhgh$rank[nhgh$diabetes == 'No']);\nn1 &lt;- sum(nhgh$diabetes == 'No');\nsum.ranks.group.1 - n1*(n1 + 1) / 2\n\n[1] 754851.5"
+  },
+  {
+    "objectID": "ordinal_regression.html#hypothesis-test",
+    "href": "ordinal_regression.html#hypothesis-test",
+    "title": "Robust regression for noisy biological data",
+    "section": "Hypothesis test",
+    "text": "Hypothesis test\n\nNull: The 2 distributions are the same\nAlt: The 2 distributions differ, i.e. one distribution tends to produce larger/smaller values than the other.\n\n\nNotice that is much more general compared to the t-test:\n\nNull: Both groups have the same mean\nAlt: Both groups have different means\nExact and asymptotic distributions of \\(W\\) were derived and can be used to calculate p-value1\n\n\n\n 1. https://www.stat.auckland.ac.nz/~wild/ChanceEnc/Ch10.wilcoxon.pdf"
+  },
+  {
+    "objectID": "ordinal_regression.html#effect-size",
+    "href": "ordinal_regression.html#effect-size",
+    "title": "Robust regression for noisy biological data",
+    "section": "Effect size",
+    "text": "Effect size\n\nOften people only report the p-value, software is inconsistent on what effect size is reported\nc-index1 (concordance probability, probability index):\n\n\\(c = Pr (Y_2 &gt; Y_1)\\) probability that value in group 2 is larger than group 1\nNull \\(c = 0.5\\)\nFor a continuous variable \\(c\\) = AUROC\n\n\n\n\\[\\begin{equation}\nc = \\frac{\\bar{R}_2 - \\frac{n_2+2}{2}}{n_1}\n\\end{equation}\\]\n\n\\(\\bar{R}_2\\): mean of ranks in group 2\n\\(n_1, n_2\\) sample size in groups 1,2\nasht::wmwTest: Estimate of \\(c\\) and Confidence Interval (Fay and Malinovsky 2018)\n\nUnlike other effect sizes used (e.g. difference in medians), this one is consistent with the Wilcoxon p-value\n\n\n\n\n 1. https://hbiostat.org/bbr/nonpar#two-sample-test-wilcoxonmannwhitney"
+  },
+  {
+    "objectID": "ordinal_regression.html#diabetes-example",
+    "href": "ordinal_regression.html#diabetes-example",
+    "title": "Robust regression for noisy biological data",
+    "section": "Diabetes example",
+    "text": "Diabetes example\n\n\n\n\n\n\n\n\n\n\n\nwilcox &lt;- asht::wmwTest(\n    formula = HbA1c ~ diabetes,\n    data = nhgh\n    );\nsprintf('c-index = %s', as.numeric(round(wilcox$estimate, 2)));\n\n[1] \"c-index = 0.86\"\n\nround(wilcox$conf.int, 2);\n\n[1] 0.85 0.87\nattr(,\"conf.level\")\n[1] 0.95\n\nwilcox$p.value;\n\n[1] 4.413508e-270\n\n\n\n\nThere is a 0.86 probability that diabetes patients have higher HbA1c compared to undiagnosed patients."
+  },
+  {
+    "objectID": "ordinal_regression.html#wilcoxon-vs.-other-methods",
+    "href": "ordinal_regression.html#wilcoxon-vs.-other-methods",
+    "title": "Robust regression for noisy biological data",
+    "section": "Wilcoxon vs. other methods",
+    "text": "Wilcoxon vs. other methods\n\nTable1 below compares power of t-test vs. Wilcoxon\nValues &gt; 1 mean Wilcoxon is more powerful\n\n\n\n\n\n\nWilcoxon better controls FPR compared to DESeq2, edgeR, limma-voom, NOISeq, dearseq(Li et al. 2022)\n\nRecommends n \\(\\ge\\) 8 per group2\n\n\n\n\n\n\n1De Schryver, Maarten, and Jan De Neve. “A tutorial on probabilistic index models: Regression models for the effect size P (Y1&lt; Y2).” Psychological Methods 24.4 (2019): 403.\n\n\n2https://towardsdatascience.com/deseq2-and-edger-should-no-longer-be-the-default-choice-for-large-sample-differential-gene-8fdf008deae9"
+  },
+  {
+    "objectID": "ordinal_regression.html#adjusting-wilcoxon-test-for-covariates",
+    "href": "ordinal_regression.html#adjusting-wilcoxon-test-for-covariates",
+    "title": "Robust regression for noisy biological data",
+    "section": "Adjusting Wilcoxon test for covariates",
+    "text": "Adjusting Wilcoxon test for covariates\n\nMost people mistakenly think Wilcoxon test and similar rank-based methods can’t adjust for covariates, however:\nThe Wilcoxon test statistic \\(W\\) is equivalent to the score test statistic from a proportional odds (PO) regression model1-3\nThus the PO model can be used to perform Wilcoxon-like tests while adjusting for covariates.\n\n\n\n\n1McCullagh, Peter. “Regression models for ordinal data.” Journal of the Royal Statistical Society: Series B (Methodological) 42.2 (1980): 109-127.\n\n\n2Equivalence of Wilcoxon Statistic and Proportional Odds Model\n\n\n3If You Like the Wilcoxon Test You Must Like the Proportional Odds Model"
+  },
+  {
+    "objectID": "ordinal_regression.html#proportional-odds-po-model",
+    "href": "ordinal_regression.html#proportional-odds-po-model",
+    "title": "Robust regression for noisy biological data",
+    "section": "Proportional Odds (PO) Model",
+    "text": "Proportional Odds (PO) Model\n\nAlso called ordered logit or ordinal logistic regression\n\n\nLet \\(Y = 1, 2, ..., k\\) be the k unique values of Y:\n\n\n\\[\\begin{equation}\nPr(Y \\ge j | X) = \\frac{1}{1 + exp[-(\\alpha_j + X\\beta)]} = expit(\\alpha_j + X\\beta)\n\\end{equation}\\]\n\n\\(j = 1,2, ..., k - 1\\)\n\\(\\alpha_j\\) is the logit of \\(Pr(Y \\ge j | X = 0)\\)\n\n\n\n https://hbiostat.org/rmsc/ordinal"
+  },
+  {
+    "objectID": "ordinal_regression.html#interpretation-of-beta",
+    "href": "ordinal_regression.html#interpretation-of-beta",
+    "title": "Robust regression for noisy biological data",
+    "section": "Interpretation of \\(\\beta\\):",
+    "text": "Interpretation of \\(\\beta\\):\n\n\\[\\begin{equation}\nexp(\\beta) = \\frac{\\text{Odds } Y \\ge j | X = x + 1}{\\text{Odds } Y \\ge j | X = x}\n\\end{equation}\\]\n\n“odds of having larger value of \\(Y\\) given 1 unit increase in \\(X\\)”\n“Group A has __ times greater odds of having a larger \\(Y\\) compared to group B”\nParameters \\(\\beta, \\alpha_j\\) estimated using MLE or Bayesian methods"
+  },
+  {
+    "objectID": "ordinal_regression.html#proportional-odds",
+    "href": "ordinal_regression.html#proportional-odds",
+    "title": "Robust regression for noisy biological data",
+    "section": "“Proportional odds”?",
+    "text": "“Proportional odds”?\n\n\\(\\beta\\) is constant for all values of \\(Y\\). Similar to CoxPH model where HR is constant for all time.\n\n\n\n\n\n\nY-axis is \\(log[\\frac{Pr(Y &gt; j | X)}{1 - Pr(Y &gt; j | X)}]\\)\nEffect of predictor (slope \\(\\beta\\)) on \\(Y\\) is the same for all \\(Y\\)\n\n\n\nWhat if non-PO?\n\nThe true lines would not be parallel.\nThe PO model \\(\\hat{\\beta}\\) still has a meaningful interpretation: the average \\(\\beta\\) across all lines: the average effect of \\(X\\) on \\(Y\\)\n\n\n\n https://www.datavis.ca/courses/grcat/grc6.html"
+  },
+  {
+    "objectID": "ordinal_regression.html#diabetes-example-1",
+    "href": "ordinal_regression.html#diabetes-example-1",
+    "title": "Robust regression for noisy biological data",
+    "section": "Diabetes example",
+    "text": "Diabetes example\n\n\nfit &lt;- rms::orm(\n    formula = HbA1c ~ diabetes,\n    data = nhgh\n    );\nodds.ratios &lt;- exp(coef(fit));\nci &lt;- exp(confint(fit));\n\nround(odds.ratios['diabetes=Yes'], 1);\n\ndiabetes=Yes \n        21.4 \n\nround(ci['diabetes=Yes',], 1);\n\n 2.5 % 97.5 % \n  18.3   24.9 \n\n\n\n\nDiabetes patients have 21.4 times greater odds of having higher HbA1c compared to undiagnosed patients."
+  },
+  {
+    "objectID": "ordinal_regression.html#c-index-for-po-model",
+    "href": "ordinal_regression.html#c-index-for-po-model",
+    "title": "Robust regression for noisy biological data",
+    "section": "c-index for PO model",
+    "text": "c-index for PO model\n\nRecall \\(c = Pr (Y_2 &gt; Y_1)\\) is an effect size for Wilcoxon test\nYou can approximate the c-index from the PO odds ratio1:\n\n\n\\[\\begin{equation}\nc = \\frac{\\text{OR}^{0.6453}}{1 + \\text{OR}^{0.6453}}\n\\end{equation}\\]\n\nFor our example: \\(c = \\frac{21.4^{0.6453}}{1 + 21.4^{0.6453}} = 0.878\\) which is close to the c-index from Wilcoxon test (0.86)\n\n\n\n 1https://www.fharrell.com/post/powilcoxon/"
+  },
+  {
+    "objectID": "ordinal_regression.html#other-effect-sizes-for-po-model",
+    "href": "ordinal_regression.html#other-effect-sizes-for-po-model",
+    "title": "Robust regression for noisy biological data",
+    "section": "Other effect sizes for PO model",
+    "text": "Other effect sizes for PO model\n\nBesides the odds ratio and c-index, PO also supports several other important estimators:\n\nQuantiles (e.g. 25th, median, 75th) - see rms::Quantile.orm\n\nDifference in quantiles between groups\n\nMean - see rms::Mean\n\\(Pr(Y &gt; y | X)\\) - “exceedance probability”\n\nDiff. in exceedance probabilities btwn groups"
+  },
+  {
+    "objectID": "ordinal_regression.html#simulation-study-to-assess-robustness-of-po-model",
+    "href": "ordinal_regression.html#simulation-study-to-assess-robustness-of-po-model",
+    "title": "Robust regression for noisy biological data",
+    "section": "Simulation study to assess robustness of PO model",
+    "text": "Simulation study to assess robustness of PO model\n\nCompare the 2-sample t-test, wilcoxon test, and PO model for testing difference in HbA1c between diabetes and undiagnosed patients.\nGoal: determine which methods control false-positive-rate\nApproach:\n\n\nRandomly sample 200 patients from nhgh diabetes dataset\nRandomly permute the group labels (diabetes vs. undiagnosed) to create a dataset where \\(H_0\\) is true\nRecord whether each test’s p value is less than \\(\\alpha = 0.05\\)\nRepeat steps 1-3 10,000 times\nCalculate FPR as the proportion of datasets where \\(p &lt; \\alpha\\)\nA method controls the FPR iff FPR \\(\\le \\alpha\\)"
+  },
+  {
+    "objectID": "ordinal_regression.html#po-model-is-more-robust-than-t-test",
+    "href": "ordinal_regression.html#po-model-is-more-robust-than-t-test",
+    "title": "Robust regression for noisy biological data",
+    "section": "PO model is more robust than t-test",
+    "text": "PO model is more robust than t-test"
+  },
+  {
+    "objectID": "ordinal_regression.html#extensions",
+    "href": "ordinal_regression.html#extensions",
+    "title": "Robust regression for noisy biological data",
+    "section": "Extensions",
+    "text": "Extensions\n\nLongitudinal PO model\nPower and sample size calculations\nBayesian PO model"
+  },
+  {
+    "objectID": "ordinal_regression.html#limitations",
+    "href": "ordinal_regression.html#limitations",
+    "title": "Robust regression for noisy biological data",
+    "section": "Limitations",
+    "text": "Limitations\n\nProportional odds assumption\n\n\n\n…violations of the proportional odds assumption usually do not prevent the PO model from providing a reasonable treatment effect assessment. - Violation of Proportional Odds is Not Fatal\n\n\nIf you only have 1 predictor the PO model will still control the FPR since PO assumption is guaranteed under \\(H_0\\)\n\n\n\nSimulations show robustness of PO model under non-PO:\n\n1 predictor\n2 predictors\n\n\n\nResources for assessing impact of PO assumption\n\nSample size for continuous outcomes\n\n\nFor discrete outcomes, large sample size is totally fine\nFor continuous outcomes, rms::orm claims to efficiently handle “over 6000 distinct values” - I haven’t tested on larger than this.\n\n\nAssumes linear and additive effects by default\n\n\nYou can manually investigate adding non-linear or interaction terms\nIt would be interesting to develop a MARS1 version of PO model to automate this\n\n\n\n 1. https://en.wikipedia.org/wiki/Multivariate_adaptive_regression_spline"
+  },
+  {
+    "objectID": "ordinal_regression.html#summary",
+    "href": "ordinal_regression.html#summary",
+    "title": "Robust regression for noisy biological data",
+    "section": "Summary",
+    "text": "Summary\n\nProportional Odds model extends the Wilcoxon rank sum test to adjust for covariates\n“If You Like the Wilcoxon test You Must Like the Proportional Odds Model”\nBiological data are often non-normally distributed and contain outliers. PO model is a robust choice here compared to t-tests/linear regression.\nPO model estimates an odds ratio (odds of having a larger value of \\(Y\\) given a 1 unit increase in \\(X\\)), but can also estimate c-index, quantiles, means\nSome simulation studies show robustness to non-PO, but more research needed here"
+  },
+  {
+    "objectID": "ordinal_regression.html#references",
+    "href": "ordinal_regression.html#references",
+    "title": "Robust regression for noisy biological data",
+    "section": "References",
+    "text": "References\n\nIntro to PO model:\n\nhttps://www.fharrell.com/post/rpo/\nFrench, Benjamin, and Matthew S. Shotwell. “Regression models for ordinal outcomes.” Jama 328.8 (2022): 772-773.\n\nWilcoxon test:\n\nhttps://hbiostat.org/bbr/nonpar#two-sample-test-wilcoxonmannwhitney\nEquivalence of Wilcoxon Statistic and Proportional Odds Model\nIf You Like the Wilcoxon Test You Must Like the Proportional Odds Model\n\nPO model for continuous outcome:\n\nLiu, Qi, et al. “Modeling continuous response variables using ordinal regression.” Statistics in medicine 36.27 (2017): 4316-4335.\nhttps://hbiostat.org/rmsc/cony\n\nOther refs in presentation:\n\n\n\n\n\n\n\nFay, Michael P, and Yaakov Malinovsky. 2018. “Confidence Intervals of the Mann-Whitney Parameter That Are Compatible with the Wilcoxon-Mann-Whitney Test.” Statistics in Medicine 37 (27): 3991–4006.\n\n\nLi, Yumei, Xinzhou Ge, Fanglue Peng, Wei Li, and Jingyi Jessica Li. 2022. “Exaggerated False Positives by Popular Differential Expression Methods When Analyzing Human Population Samples.” Genome Biology 23 (1): 79."
+  }
+]

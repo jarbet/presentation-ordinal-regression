@@ -1,0 +1,616 @@
+---
+title: 'Robust regression for noisy biological data'
+author: "[Jaron Arbet]{style='color: steelblue;'}"
+date: '`r Sys.Date()`'
+date-format: short
+format: 
+  revealjs: 
+    output-file: ordinal_regression.html
+    incremental: true
+scrollable: TRUE
+slide-number: c/t
+bibliography: references.bib
+embed-resources: true
+---
+
+```{r}
+library(BoutrosLab.plotting.general);
+library(rms);
+library(Hmisc);
+library(asht);
+library(parallel);
+seed <- 1234;
+title.cex <- 2;
+text.cex <- 1.6;
+source('utilities.R');
+```
+
+```{r prepare datasets}
+Hmisc::getHdata('nhgh');
+#Hmisc::getHdata('support');
+
+nhgh$diabetes <- factor(
+    x = nhgh$dx,
+    levels = c(0, 1),
+    labels = c('No', 'Yes')
+    );
+colnames(nhgh)[colnames(nhgh) == 'gh'] <- 'HbA1c';
+colnames(nhgh)[colnames(nhgh) == 'SCr'] <- 'Creatinine';
+colnames(nhgh)[colnames(nhgh) == 'bun'] <- 'blood.urea.nitrogen';
+colnames(nhgh)[colnames(nhgh) == 'waist'] <- 'waist.circumference';
+colnames(nhgh)[colnames(nhgh) == 'wt'] <- 'weight';
+
+```
+
+```{r prepare fev data}
+data(fev, package = 'mplot');
+colnames(fev)[colnames(fev) == 'height'] <- 'height.inches';
+fev$sex <- factor(fev$sex, levels = c(0,1), labels = c('Female', 'Male'));
+fev$smoke <- factor(fev$smoke, levels = c(0, 1), labels = c('No', 'Yes'));
+```
+
+## `r colorize('Motivation', 'steelblue')`
+
+* Ordinal or numeric outcome (continuous or discrete)
+* May have outliers or non-normally distributed <br /> (*e.g.* skewed, heavy tails)
+* Examples in our lab:
+    + Normalized RNA or protein abundance
+    + Copy Number
+    + DNA methylation beta or m-values
+* **`r colorize('Goal', 'steelblue')`**: Perform robust statistical tests comparing noisy features btwn groups, potentially adjusting for covariates
+* **`r colorize('Robust', 'steelblue')`**?
+    + Minimal assumptions on the data distribution
+    + Control false-positive-rate for wide variety of data-types
+    + Insensitive to outliers
+
+## `r colorize('But first... the Wilcoxon/Mann-Whitney U-test', 'steelblue')`
+
+* Ordinal/numeric outcome btwn 2 unpaired groups
+* Robust to outliers and no assumptions on data distribution
+* **`r colorize('Example', 'steelblue')`**:
+   + NHANES diabetes data ([source](https://hbiostat.org/data/))
+   + Compare HbA1c between `r sum(nhgh$diabetes == 'Yes')` patients diagnosed with diabetes (or pre-diabetes) *vs.* `r sum(nhgh$diabetes == 'No')` undiagnosed
+
+. . .
+
+:::{.column-body-outset}
+```{r}
+yat <- seq(0, 20, 5);
+yaxis.lab <- yat;
+ylimits <- c(min(yat), max(yat));
+create.boxplot(
+    formula = HbA1c ~ diabetes,
+    data = nhgh,
+    ylab.cex = title.cex,
+    ylab.label = 'HbA1c (%)',
+    xlab.label = 'Diabetes',
+    top.padding = 0,
+    bottom.padding = 0,
+    yat = yat,
+    yaxis.lab = yaxis.lab,
+    ylimits = ylimits
+    );
+```
+:::
+
+### Questions:
+
+1. What is the Null and Alternative hypothesis?
+2. What is the effect size?
+
+## `r colorize('How it works', 'steelblue')`
+
+* Analyze ranked *order* of the data, rather than raw values:
+
+1. Combine the 2 groups and rank from smallest to largest:
+
+. . .
+
+```{r}
+set.seed(123);
+index.diabetes <- which(nhgh$diabetes == 'Yes');
+index.normal <- which(nhgh$diabetes == 'No');
+n <- 4;
+index.diabetes.keep <- sample(index.diabetes, n);
+index.normal.keep <- sample(index.normal, n);
+nhgh.subset <- nhgh[c(index.diabetes.keep, index.normal.keep), c('diabetes', 'HbA1c')];
+nhgh.subset <- nhgh.subset[order(nhgh.subset$HbA1c),];
+nhgh.subset$rank <- rank(nhgh.subset$HbA1c);
+
+knitr::kable(nhgh.subset, row.names = FALSE, caption = sprintf('Example of %s patients', nrow(nhgh.subset)));
+```
+
+
+2. Wilcoxon test statistic:
+
+. . .
+
+\begin{equation}
+W = R^*_1 - \frac{n_1(n_1 + 1)}{2}
+\end{equation}
+
+* $R^*_1$ = sum of ranks in group 1
+* $n_1$ = sample size in group 1
+
+. . .
+
+Wilcoxon test using the full data:
+
+. . . 
+
+```{r, include = TRUE, echo = TRUE}
+wilcox <- wilcox.test(
+    formula = HbA1c ~ diabetes,
+    data = nhgh
+    );
+wilcox$statistic;
+wilcox$p.value;
+```
+* Notice $W=$ `r format(as.numeric(wilcox$statistic), scientific = FALSE)`, which we can manually verify:
+
+. . .
+
+```{r, echo = TRUE}
+nhgh$rank <- rank(nhgh$HbA1c);
+sum.ranks.group.1 <- sum(nhgh$rank[nhgh$diabetes == 'No']);
+n1 <- sum(nhgh$diabetes == 'No');
+sum.ranks.group.1 - n1*(n1 + 1) / 2
+```
+
+## Hypothesis test
+
+* **Null**: The 2 distributions are the same
+* **Alt**: The 2 distributions differ, *i.e.* one distribution tends to produce larger/smaller values than the other.
+
+. . .
+
+Notice that is much more general compared to the t-test:
+
+* **Null**: Both groups have the same mean
+* **Alt:** Both groups have different means
+
+* Exact and asymptotic distributions of $W$ were derived and can be used to calculate p-value^1^
+
+. . .
+
+<font size='2'> 1. [https://www.stat.auckland.ac.nz/~wild/ChanceEnc/Ch10.wilcoxon.pdf](https://www.stat.auckland.ac.nz/~wild/ChanceEnc/Ch10.wilcoxon.pdf)</font>
+
+## Effect size
+
+* Often people only report the p-value, software is inconsistent on what effect size is reported
+* **c-index**^1^ (concordance probability, probability index):
+    + $c = Pr (Y_2 > Y_1)$ probability that value in group 2 is larger than group 1
+    + Null $c = 0.5$
+    + For a continuous variable $c$ = AUROC
+
+. . .
+
+\begin{equation}
+c = \frac{\bar{R}_2 - \frac{n_2+2}{2}}{n_1}
+\end{equation}
+
+* $\bar{R}_2$: mean of ranks in group 2
+* $n_1, n_2$ sample size in groups 1,2
+
+* `asht::wmwTest`: Estimate of $c$ and Confidence Interval [@wilcox-CI]
+    + Unlike other effect sizes used (*e.g.* difference in medians), this one is *consistent* with the Wilcoxon p-value
+    
+. . .
+
+<font size='2'> 1. [https://hbiostat.org/bbr/nonpar#two-sample-test-wilcoxonmannwhitney](https://hbiostat.org/bbr/nonpar#two-sample-test-wilcoxonmannwhitney)
+</font>
+
+## Diabetes example
+
+. . .
+
+:::{.column-body-outset}
+```{r}
+create.boxplot(
+    formula = HbA1c ~ diabetes,
+    data = nhgh,
+    ylab.cex = title.cex,
+    ylab.label = 'HbA1c (%)',
+    xlab.label = 'Diabetes',
+    top.padding = 0,
+    bottom.padding = 0
+    );
+```
+:::
+
+. . .
+
+```{r, echo = TRUE}
+wilcox <- asht::wmwTest(
+    formula = HbA1c ~ diabetes,
+    data = nhgh
+    );
+sprintf('c-index = %s', as.numeric(round(wilcox$estimate, 2)));
+round(wilcox$conf.int, 2);
+wilcox$p.value;
+```
+
+. . . 
+
+There is a `r as.numeric(round(wilcox$estimate,3))`  probability that diabetes patients have higher HbA1c compared to undiagnosed patients.
+
+## Wilcoxon *vs.* other methods
+
+* Table^1^ below compares power of t-test *vs.* Wilcoxon
+* Values > 1 mean Wilcoxon is more powerful
+
+. . .
+
+:::{.column-body-outset}
+![](./figures/ttest_wilcoxon_efficiency.png)
+:::
+
+* Wilcoxon better controls FPR compared to DESeq2, edgeR, limma-voom, NOISeq, dearseq[@li2022FPR]
+    + Recommends n $\ge$ 8 per group^2^
+
+. . .
+
+<ul style="margin: 0; padding: 0; line-height: 1; font-size: 14px;"> 
+  <li>^1^De Schryver, Maarten, and Jan De Neve. "A tutorial on probabilistic index models: Regression models for the effect size P (Y1< Y2)." Psychological Methods 24.4 (2019): 403.</li> 
+  <li>^2^[https://towardsdatascience.com/deseq2-and-edger-should-no-longer-be-the-default-choice-for-large-sample-differential-gene-8fdf008deae9](https://towardsdatascience.com/deseq2-and-edger-should-no-longer-be-the-default-choice-for-large-sample-differential-gene-8fdf008deae9)</li> 
+</ul>
+
+
+## Adjusting Wilcoxon test for covariates
+
+* Most people mistakenly think Wilcoxon test and similar rank-based methods can't adjust for covariates, however:
+* The Wilcoxon test statistic $W$ is equivalent to the score test statistic from a **proportional odds (PO) regression model**^1-3^
+* Thus the PO model can be used to perform Wilcoxon-like tests while adjusting for covariates.
+
+. . .
+
+<ul style="margin: 0; padding: 0; line-height: 1; font-size: 14px;">
+  <li>^1^McCullagh, Peter. "Regression models for ordinal data." Journal of the Royal Statistical Society: Series B (Methodological) 42.2 (1980): 109-127.</li>
+  <li>^2^[Equivalence of Wilcoxon Statistic and Proportional Odds Model](https://www.fharrell.com/post/powilcoxon/)</li>
+  <li>^3^[If You Like the Wilcoxon Test You Must Like the Proportional Odds Model](https://onedrive.live.com/redir?resid=4C8382D69ED5C54B%21143&page=Edit&wd=target%28GLM.one%7C436ed6ee-14f3-461a-9488-602c2c3cc00e%2FOrdinal%20proportional%20odds%20logistic%20regression%7Cf47d7d2f-f5a5-4ffd-adc3-48a0a020c451%2F%29&wdorigin=NavigationUrl)
+</li>
+</ul>
+
+## Proportional Odds (PO) Model
+
+* Also called ordered logit or ordinal logistic regression
+
+. . .
+
+Let $Y = 1, 2, ..., k$ be the *k* unique values of *Y*:
+
+. . .
+
+\begin{equation}
+Pr(Y \ge j | X) = \frac{1}{1 + exp[-(\alpha_j + X\beta)]} = expit(\alpha_j + X\beta)
+\end{equation}
+
+* $j = 1,2, ..., k - 1$
+* $\alpha_j$ is the logit of $Pr(Y \ge j | X = 0)$
+
+. . .
+
+<font size='2'> [https://hbiostat.org/rmsc/ordinal](https://hbiostat.org/rmsc/ordinal)
+</font>
+
+## Interpretation of $\beta$:
+
+. . .
+
+\begin{equation}
+exp(\beta) = \frac{\text{Odds } Y \ge j | X = x + 1}{\text{Odds } Y \ge j | X = x}
+\end{equation}
+
+* "odds of having larger value of $Y$ given 1 unit increase in $X$"
+* "Group A has __ times greater odds of having a larger $Y$ compared to group B"
+* Parameters $\beta, \alpha_j$ estimated using MLE or Bayesian methods
+
+
+## "Proportional odds"?
+
+* $\beta$ is constant for all values of $Y$.  Similar to CoxPH model where HR is constant for all time.
+
+. . .
+
+:::{.column-body-outset}
+![](./figures/proportional_odds_assumption.png)
+:::
+
+* Y-axis is $log[\frac{Pr(Y > j | X)}{1 - Pr(Y > j | X)}]$
+* Effect of predictor (slope $\beta$) on $Y$ is the same for all $Y$
+
+. . .
+
+**What if non-PO?**
+
+* The true lines would not be parallel.
+* The PO model $\hat{\beta}$ still has a meaningful interpretation: the *average* $\beta$ across all lines: the average effect of $X$ on $Y$
+
+. . .
+
+<font size='2'> [https://www.datavis.ca/courses/grcat/grc6.html](https://www.datavis.ca/courses/grcat/grc6.html)</font>
+
+## Diabetes example
+
+. . .
+
+```{r, echo = TRUE}
+fit <- rms::orm(
+    formula = HbA1c ~ diabetes,
+    data = nhgh
+    );
+odds.ratios <- exp(coef(fit));
+ci <- exp(confint(fit));
+
+round(odds.ratios['diabetes=Yes'], 1);
+round(ci['diabetes=Yes',], 1);
+```
+
+. . .
+
+Diabetes patients have `r round(odds.ratios['diabetes=Yes'], 1)` times greater odds of having higher HbA1c compared to undiagnosed patients.
+
+## c-index for PO model
+
+* Recall $c = Pr (Y_2 > Y_1)$ is an effect size for Wilcoxon test
+* You can approximate the c-index from the PO odds ratio^1^:
+
+. . .
+
+\begin{equation}
+c = \frac{\text{OR}^{0.6453}}{1 + \text{OR}^{0.6453}}
+\end{equation}
+
+* For our example: $c = \frac{`r round(odds.ratios['diabetes=Yes'], 1)`^{0.6453}}{1 + `r round(odds.ratios['diabetes=Yes'], 1)`^{0.6453}} = `r round(round(odds.ratios['diabetes=Yes'], 1)^0.6453 / (1 + round(odds.ratios['diabetes=Yes'], 1)^0.6453), 3)`$ which is close to the c-index from Wilcoxon test (`r as.numeric(round(wilcox$estimate,3))`)
+
+. . .
+
+<font size='2'> ^1^[https://www.fharrell.com/post/powilcoxon/](https://www.fharrell.com/post/powilcoxon/)
+</font>
+
+## Other effect sizes for PO model
+
+. . .
+
+Besides the odds ratio and c-index, PO also supports several other important estimators:
+
+* Quantiles (*e.g.* 25th, median, 75th) - see `rms::Quantile.orm`
+    + Difference  in quantiles between groups
+* Mean - see `rms::Mean`
+* $Pr(Y > y | X)$ - "exceedance probability"
+    + Diff. in exceedance probabilities btwn groups
+
+## Simulation study to assess robustness of PO model
+
+* Compare the 2-sample t-test, wilcoxon test, and PO model for testing difference in HbA1c between diabetes and undiagnosed patients.
+* **Goal**: determine which methods control false-positive-rate
+* **Approach**:
+
+1. Randomly sample 200 patients from `nhgh` diabetes dataset
+2. Randomly permute the group labels (diabetes *vs.* undiagnosed) to create a dataset where $H_0$ is true
+3. Record whether each test's p value is less than $\alpha = 0.05$
+4. Repeat steps 1-3 10,000 times
+5. Calculate FPR as the proportion of datasets where $p < \alpha$
+6.  A method controls the FPR iff FPR $\le \alpha$
+
+```{r simulation, eval = FALSE}
+set.seed(123, "L'Ecuyer")
+
+n <- 200;
+index <- sample(1:nrow(nhgh), n);
+nhgh.subset.for.sim <- nhgh[index,];
+
+dataset <- nhgh.subset.for.sim;
+table(dataset$diabetes);
+n.perms <- 10000;
+print.prog <- 100;
+outcomes.test <- c('HbA1c');
+#outcomes.test <- c('Creatinine', 'blood.urea.nitrogen', 'albumin', 'HbA1c', 'waist.circumference','bmi', 'weight')
+stopifnot(all(outcomes.test %in% colnames(dataset)));
+
+start <- Sys.time();
+res.all.outcomes <- lapply(
+    X = outcomes.test,
+    #mc.cores = length(outcomes.test),
+    FUN = function(outcome) {
+        index <- sample(1:nrow(nhgh), n);
+        nhgh.subset.for.sim <- nhgh[index,];
+
+        dataset <- nhgh.subset.for.sim;
+        start.one <- Sys.time();
+        res <- mclapply(
+            X = 1:n.perms,
+            mc.cores = parallel::detectCores() - 1,
+            FUN = function(x) {
+                if (x %% print.prog == 0) {
+                    print(x);
+                    }
+                perm.index <- sample(1:nrow(dataset), nrow(dataset));
+                dataset$diabetes.perm <- dataset$diabetes[perm.index];
+                form <- as.formula(sprintf('%s ~ diabetes.perm', outcome));
+                t.test.p <- t.test(
+                    formula = form,
+                    data = dataset
+                    )$p.value;
+                wilcox.p <- wilcox.test(
+                    formula = form,
+                    data = dataset
+                    )$p.value;
+                fit.orm <- orm(
+                    formula = form,
+                    data = dataset
+                    );
+                ordinal.reg.p <- anova(fit.orm)['diabetes.perm', 'P'];
+        
+                return(data.frame(
+                    outcome = outcome,
+                    t.test.p = t.test.p,
+                    wilcox.p = wilcox.p,
+                    ordinal.reg.p = ordinal.reg.p
+                    ))
+                }
+            );
+        res <- do.call(rbind, res);
+        sig <- apply(
+            X = res[,-1],
+            MARGIN = 2,
+            FUN = function(x) {
+                stats <- data.frame(
+                    prop.sig.10 = mean(x <= 0.10),
+                    prop.sig.05 = mean(x <= 0.05),
+                    prop.sig.01 = mean(x <= 0.01)
+                    )
+                }
+            );
+        sig <- do.call(rbind, sig);
+        sig$method <- rownames(sig);
+        sig$outcome <- outcome;
+        return(list(
+            sig = sig,
+            res = res
+            ))
+        end.one <- Sys.time();
+        print(paste0('Finished ', outcome))
+        print(end.one - start.one);
+        print('---------------')
+        }
+    );
+end <- Sys.time();
+end - start;
+sig <- do.call(rbind, lapply(res.all.outcomes, function(x) x$sig));
+
+sig$model <- factor(
+    x = sig$method,
+    levels = c('t.test.p', 'wilcox.p', 'ordinal.reg.p'),
+    labels = c('T-test','Wilcoxon', 'PO model')
+    );
+save(
+    sig,
+    res.all.outcomes,
+    file = 'sim_results.Rdata'
+    );
+```
+
+## PO model is more robust than t-test
+
+```{r, include = TRUE}
+load('sim_results.Rdata');
+
+model.colours <- default.colours(length(unique(sig$model)))
+names(model.colours) <- levels(sig$model);
+
+legend <- legend.grob( 
+    list( 
+        # clusters 
+        legend = list( 
+            colours = model.colours, 
+            labels = names(model.colours), 
+            title = expression(bold(underline('Model')))
+            )
+        ), 
+    title.just = 'left', 
+    title.cex = 2, 
+    label.cex = 1.8 
+    );
+yat <- seq(0, 0.1, by = 0.02);
+ylimits = c(min(yat), max(yat));
+yaxis.lab = yat;
+create.barplot(
+    prop.sig.05 ~ model,
+    #outcome ~ prop.sig.05,
+    #groups = sig$model,
+    data = sig,
+    col = model.colours,
+    plot.horizontal = FALSE,
+    abline.h = 0.05,
+    abline.lwd = 2,
+    yat = yat,
+    ylimits = ylimits,
+    yaxis.lab = yaxis.lab,
+    abline.col = 'black',
+    abline.lty = 2,
+    ylab.label = 'False positive rate',
+    xlab.label = '',
+    legend = list( 
+        right = list( 
+            fun = legend
+            )
+        )
+    );
+```
+
+## Extensions
+
+* [Longitudinal PO model](https://www.fharrell.com/post/rpo/#longitudinal-ordinal-models)
+
+* [Power and sample size calculations](https://www.fharrell.com/post/rpo/#clinical-trial-design-resources)
+
+* [Bayesian PO model](https://hbiostat.org/bbr/nonpar.html#bayesian-proportional-odds-model)
+
+## Limitations
+
+1. Proportional odds assumption
+
+. . .
+
+> ...violations of the proportional odds assumption usually do not prevent the PO model from providing a reasonable treatment effect assessment. - [Violation of Proportional Odds is Not Fatal](https://www.fharrell.com/post/po/)
+
+* If you only have 1 predictor the PO model will still control the FPR since PO assumption is guaranteed under $H_0$
+
+. . .
+
+Simulations show robustness of PO model under non-PO:
+
+* [1 predictor](https://www.fharrell.com/post/powilcoxon/#simulation)
+* [2 predictors](https://www.fharrell.com/post/impactpo/#simulation-study-of-effect-of-adjusting-for-a-highly-non-po-covariate)
+
+. . .
+
+[Resources for assessing impact of PO assumption](https://www.fharrell.com/post/impactpo/)
+
+2. Sample size for continuous outcomes
+
+* For discrete outcomes, large sample size is totally fine
+* For continuous outcomes, `rms::orm` claims to efficiently handle "over 6000 distinct values" - I haven't tested on larger than this.
+
+3. Assumes linear and additive effects by default
+
+* You can manually investigate adding non-linear or interaction terms
+* It would be interesting to develop a MARS^1^ version of PO model to automate this
+
+. . .
+
+<font size='2'> 1. [https://en.wikipedia.org/wiki/Multivariate_adaptive_regression_spline](https://en.wikipedia.org/wiki/Multivariate_adaptive_regression_spline)</font>
+
+## Summary
+
+* Proportional Odds model extends the Wilcoxon rank sum test to adjust for covariates
+* ["If You Like the Wilcoxon test You Must Like the Proportional Odds Model"](https://www.fharrell.com/post/wpo/)
+* Biological data are often non-normally distributed and contain outliers.  PO model is a robust choice here compared to t-tests/linear regression.
+* PO model estimates an odds ratio (odds of having a larger value of $Y$ given a 1 unit increase in $X$), but can also estimate c-index, quantiles, means
+* Some simulation studies show robustness to non-PO, but more research needed here
+
+
+## References
+
+::: {.nonincremental}
+
+#### Intro to PO model:
+
+* https://www.fharrell.com/post/rpo/
+* French, Benjamin, and Matthew S. Shotwell. "Regression models for ordinal outcomes." Jama 328.8 (2022): 772-773.
+
+#### Wilcoxon test:
+
+* [https://hbiostat.org/bbr/nonpar#two-sample-test-wilcoxonmannwhitney](https://hbiostat.org/bbr/nonpar#two-sample-test-wilcoxonmannwhitney)
+* [Equivalence of Wilcoxon Statistic and Proportional Odds Model](https://www.fharrell.com/post/powilcoxon/)
+ * [If You Like the Wilcoxon Test You Must Like the Proportional Odds Model](https://onedrive.live.com/redir?resid=4C8382D69ED5C54B%21143&page=Edit&wd=target%28GLM.one%7C436ed6ee-14f3-461a-9488-602c2c3cc00e%2FOrdinal%20proportional%20odds%20logistic%20regression%7Cf47d7d2f-f5a5-4ffd-adc3-48a0a020c451%2F%29&wdorigin=NavigationUrl)
+
+#### PO model for continuous outcome:
+
+* Liu, Qi, et al. "Modeling continuous response variables using ordinal regression." Statistics in medicine 36.27 (2017): 4316-4335.
+* [https://hbiostat.org/rmsc/cony](https://hbiostat.org/rmsc/cony)
+
+#### Other refs in presentation:
+
+:::
